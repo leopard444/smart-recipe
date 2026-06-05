@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: smart-recipe-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./frontend/dist:/usr/share/nginx/html
+      - ./backend/uploads:/var/www/uploads
+    depends_on:
+      - flask
+    restart: unless-stopped
+    networks:
+      - recipe-net
+
+  flask:
+    build: ./backend
+    container_name: smart-recipe-flask
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-change-me}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me}
+      - DATABASE_URL=mysql://${MYSQL_USER:-recipe_user}:${MYSQL_PASSWORD:-recipe_pass}@mysql:3306/${MYSQL_DATABASE:-smart_recipe}
+      - REDIS_URL=redis://redis:6379/0
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_API_BASE=${LLM_API_BASE:-https://api.openai.com}
+      - LLM_DEFAULT_MODEL=${LLM_DEFAULT_MODEL:-gpt-4o-mini}
+      - ENABLE_SCHEDULER=true
+      - MYSQL_HOST=mysql
+      - MYSQL_USER=${MYSQL_USER:-recipe_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-recipe_pass}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-smart_recipe}
+      - BACKUP_DIR=/app/backups
+      - UPLOADS_DIR=/app/uploads
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/backups:/app/backups
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - recipe-net
+
+  mysql:
+    image: mysql:8.0
+    container_name: smart-recipe-mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-rootpassword}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-smart_recipe}
+      - MYSQL_USER=${MYSQL_USER:-recipe_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-recipe_pass}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - recipe-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: smart-recipe-redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - recipe-net
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  recipe-net:
+    driver: bridge
